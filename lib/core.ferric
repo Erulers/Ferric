@@ -1,0 +1,113 @@
+// FERRIC core-library reference implementation and cookbook.
+// This file is executable as a demonstration. There is not yet an import/linker
+// system, so these definitions must be included in a program until imports exist.
+
+module("ferric.core.reference", version(0, 3, 0)) {
+    define_function("clamp", parameters("value", "minimum", "maximum")) {
+        if_true(condition(reference("value") < reference("minimum"))) {
+            return_value(reference("minimum"));
+        }
+        if_true(condition(reference("value") > reference("maximum"))) {
+            return_value(reference("maximum"));
+        }
+        return_value(reference("value"));
+    }
+
+    define_function("is_even", parameters("value")) {
+        return_value((reference("value") % 2) == 0);
+    }
+
+    define_function("sum_range", parameters("start", "stop")) {
+        declare(integer, "total", value(integer, 0), mutable(true));
+        for_range("item", reference("start"), reference("stop"), 1) {
+            assign("total", reference("total") + reference("item"));
+        }
+        return_value(reference("total"));
+    }
+
+    define_function("factorial", parameters("n")) {
+        if_true(condition(reference("n") < 0)) {
+            return_value(-1);
+        }
+        declare(integer, "result", value(integer, 1), mutable(true));
+        for_range("factor", 2, reference("n") + 1, 1) {
+            assign("result", reference("result") * reference("factor"));
+        }
+        return_value(reference("result"));
+    }
+
+    define_function("fibonacci", parameters("n")) {
+        if_true(condition(reference("n") <= 0)) {
+            return_value(0);
+        }
+        if_true(condition(reference("n") == 1)) {
+            return_value(1);
+        }
+        declare(integer, "previous", value(integer, 0), mutable(true));
+        declare(integer, "current", value(integer, 1), mutable(true));
+        declare(integer, "next_value", value(integer, 0), mutable(true));
+        declare(integer, "index", value(integer, 1), mutable(true));
+        while_loop(condition(reference("index") < reference("n"))) {
+            assign("next_value", reference("previous") + reference("current"));
+            assign("previous", reference("current"));
+            assign("current", reference("next_value"));
+            assign("index", reference("index") + 1);
+        }
+        return_value(reference("current"));
+    }
+
+    define_function("gcd", parameters("left", "right")) {
+        declare(integer, "a", value(integer, reference("left")), mutable(true));
+        declare(integer, "b", value(integer, reference("right")), mutable(true));
+        declare(integer, "temporary", value(integer, 0), mutable(true));
+        while_loop(condition(reference("b") != 0)) {
+            assign("temporary", reference("b"));
+            assign("b", reference("a") % reference("b"));
+            assign("a", reference("temporary"));
+        }
+        return_value(abs(reference("a")));
+    }
+
+    define_function("power_integer", parameters("base", "exponent")) {
+        if_true(condition(reference("exponent") < 0)) {
+            return_value(0);
+        }
+        declare(integer, "result", value(integer, 1), mutable(true));
+        for_range("step", 0, reference("exponent"), 1) {
+            assign("result", reference("result") * reference("base"));
+        }
+        return_value(reference("result"));
+    }
+
+    define_function("is_prime", parameters("candidate")) {
+        if_true(condition(reference("candidate") < 2)) {
+            return_value(false);
+        }
+        declare(integer, "divisor", value(integer, 2), mutable(true));
+        while_loop(condition((reference("divisor") * reference("divisor")) <= reference("candidate"))) {
+            if_true(condition((reference("candidate") % reference("divisor")) == 0)) {
+                return_value(false);
+            }
+            assign("divisor", reference("divisor") + 1);
+        }
+        return_value(true);
+    }
+
+    // Executable library smoke tests.
+    println("FERRIC core library smoke test");
+    println("clamp(17, 0, 10) =", clamp(17, 0, 10));
+    println("is_even(42) =", is_even(42));
+    println("sum_range(1, 101) =", sum_range(1, 101));
+    println("factorial(10) =", factorial(10));
+    println("fibonacci(20) =", fibonacci(20));
+    println("gcd(84, 30) =", gcd(84, 30));
+    println("power_integer(3, 8) =", power_integer(3, 8));
+    println("is_prime(97) =", is_prime(97));
+    assert_equal(clamp(17, 0, 10), 10);
+    assert_equal(factorial(10), 3628800);
+    assert_equal(fibonacci(20), 6765);
+    assert_equal(gcd(84, 30), 6);
+    assert_equal(power_integer(3, 8), 6561);
+    assert_equal(is_prime(97), true);
+    println("Core library smoke test passed.");
+}

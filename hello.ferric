@@ -1,0 +1,25 @@
+module("main", version(1,0,0)) {
+    scope("global", lifetime("process")) {
+        declare(text, "message",
+            value(text, "..- ... .---- .---- --- .... --"),
+            mutable(false),
+            visibility(private));
+
+        invoke(
+            function("stdout.write"),
+            arguments(
+                reference("message",
+                    expected_type(text),
+                    access(read_only))
+            ),
+            effects(io),
+            result(discard(void))
+        );
+    }
+}
+// This is a single-line comment
+
+#  This is also a single-line comment
+
+/* This is a
+   multi-line comment I'm crazy, I know*/

@@ -1,0 +1,419 @@
+// FERRIC NMOS 6502 emulator: all 151 documented opcodes.
+// Functional instruction semantics, 64 KiB RAM, registers, flags, stack,
+// official addressing modes, decimal ADC/SBC, BRK/RTI, and base cycle counts.
+// Not transistor/cycle exact: bus dummy reads, interrupts from external devices,
+// and undocumented opcodes are not implemented. Opcode $02 is used as a host
+// stop sentinel in the built-in test program (it is an undocumented KIL opcode).
+// Run: python tools\ferric.py run 6502.ferric
+
+module("ferric_nmos_6502", version(1, 0, 0)) {
+    println("FERRIC NMOS 6502 EMULATOR");
+    println("Documented opcodes: 151");
+    println("Address space: 65536 bytes");
+    println("Mode: functional emulation; base cycle accounting");
+    println("");
+
+    declare(array, "memory", array(65536, 0), mutable(false), visibility(private));
+    declare(array, "program", array(
+        169, 5, 105, 3, 141, 0, 2, 162, 2, 232, 142, 1, 2, 160, 127, 200,
+        136, 169, 0, 240, 2, 169, 255, 169, 42, 141, 2, 2, 2
+    ), mutable(false), visibility(private));
+    declare(array, "opcode_names", array(
+        'BRK', 'ORA', 'ILL', 'ILL', 'ILL', 'ORA', 'ASL', 'ILL', 'PHP', 'ORA', 'ASL', 'ILL', 'ILL', 'ORA', 'ASL', 'ILL',
+        'BPL', 'ORA', 'ILL', 'ILL', 'ILL', 'ORA', 'ASL', 'ILL', 'CLC', 'ORA', 'ILL', 'ILL', 'ILL', 'ORA', 'ASL', 'ILL',
+        'JSR', 'AND', 'ILL', 'ILL', 'BIT', 'AND', 'ROL', 'ILL', 'PLP', 'AND', 'ROL', 'ILL', 'BIT', 'AND', 'ROL', 'ILL',
+        'BMI', 'AND', 'ILL', 'ILL', 'ILL', 'AND', 'ROL', 'ILL', 'SEC', 'AND', 'ILL', 'ILL', 'ILL', 'AND', 'ROL', 'ILL',
+        'RTI', 'EOR', 'ILL', 'ILL', 'ILL', 'EOR', 'LSR', 'ILL', 'PHA', 'EOR', 'LSR', 'ILL', 'JMP', 'EOR', 'LSR', 'ILL',
+        'BVC', 'EOR', 'ILL', 'ILL', 'ILL', 'EOR', 'LSR', 'ILL', 'CLI', 'EOR', 'ILL', 'ILL', 'ILL', 'EOR', 'LSR', 'ILL',
+        'RTS', 'ADC', 'ILL', 'ILL', 'ILL', 'ADC', 'ROR', 'ILL', 'PLA', 'ADC', 'ROR', 'ILL', 'JMP', 'ADC', 'ROR', 'ILL',
+        'BVS', 'ADC', 'ILL', 'ILL', 'ILL', 'ADC', 'ROR', 'ILL', 'SEI', 'ADC', 'ILL', 'ILL', 'ILL', 'ADC', 'ROR', 'ILL',
+        'ILL', 'STA', 'ILL', 'ILL', 'STY', 'STA', 'STX', 'ILL', 'DEY', 'ILL', 'TXA', 'ILL', 'STY', 'STA', 'STX', 'ILL',
+        'BCC', 'STA', 'ILL', 'ILL', 'STY', 'STA', 'STX', 'ILL', 'TYA', 'STA', 'TXS', 'ILL', 'ILL', 'STA', 'ILL', 'ILL',
+        'LDY', 'LDA', 'LDX', 'ILL', 'LDY', 'LDA', 'LDX', 'ILL', 'TAY', 'LDA', 'TAX', 'ILL', 'LDY', 'LDA', 'LDX', 'ILL',
+        'BCS', 'LDA', 'ILL', 'ILL', 'LDY', 'LDA', 'LDX', 'ILL', 'CLV', 'LDA', 'TSX', 'ILL', 'LDY', 'LDA', 'LDX', 'ILL',
+        'CPY', 'CMP', 'ILL', 'ILL', 'CPY', 'CMP', 'DEC', 'ILL', 'INY', 'CMP', 'DEX', 'ILL', 'CPY', 'CMP', 'DEC', 'ILL',
+        'BNE', 'CMP', 'ILL', 'ILL', 'ILL', 'CMP', 'DEC', 'ILL', 'CLD', 'CMP', 'ILL', 'ILL', 'ILL', 'CMP', 'DEC', 'ILL',
+        'CPX', 'SBC', 'ILL', 'ILL', 'CPX', 'SBC', 'INC', 'ILL', 'INX', 'SBC', 'NOP', 'ILL', 'CPX', 'SBC', 'INC', 'ILL',
+        'BEQ', 'SBC', 'ILL', 'ILL', 'ILL', 'SBC', 'INC', 'ILL', 'SED', 'SBC', 'ILL', 'ILL', 'ILL', 'SBC', 'INC', 'ILL'
+    ), mutable(false), visibility(private));
+    declare(array, "address_modes", array(
+        0, 10, 0, 0, 0, 3, 3, 0, 0, 2, 1, 0, 0, 6, 6, 0,
+        12, 11, 0, 0, 0, 4, 4, 0, 0, 8, 0, 0, 0, 7, 7, 0,
+        6, 10, 0, 0, 3, 3, 3, 0, 0, 2, 1, 0, 6, 6, 6, 0,
+        12, 11, 0, 0, 0, 4, 4, 0, 0, 8, 0, 0, 0, 7, 7, 0,
+        0, 10, 0, 0, 0, 3, 3, 0, 0, 2, 1, 0, 6, 6, 6, 0,
+        12, 11, 0, 0, 0, 4, 4, 0, 0, 8, 0, 0, 0, 7, 7, 0,
+        0, 10, 0, 0, 0, 3, 3, 0, 0, 2, 1, 0, 9, 6, 6, 0,
+        12, 11, 0, 0, 0, 4, 4, 0, 0, 8, 0, 0, 0, 7, 7, 0,
+        0, 10, 0, 0, 3, 3, 3, 0, 0, 0, 0, 0, 6, 6, 6, 0,
+        12, 11, 0, 0, 4, 4, 5, 0, 0, 8, 0, 0, 0, 7, 0, 0,
+        2, 10, 2, 0, 3, 3, 3, 0, 0, 2, 0, 0, 6, 6, 6, 0,
+        12, 11, 0, 0, 4, 4, 5, 0, 0, 8, 0, 0, 7, 7, 8, 0,
+        2, 10, 0, 0, 3, 3, 3, 0, 0, 2, 0, 0, 6, 6, 6, 0,
+        12, 11, 0, 0, 0, 4, 4, 0, 0, 8, 0, 0, 0, 7, 7, 0,
+        2, 10, 0, 0, 3, 3, 3, 0, 0, 2, 0, 0, 6, 6, 6, 0,
+        12, 11, 0, 0, 0, 4, 4, 0, 0, 8, 0, 0, 0, 7, 7, 0
+    ), mutable(false), visibility(private));
+    declare(array, "base_cycles", array(
+        7, 6, 0, 0, 0, 3, 5, 0, 3, 2, 2, 0, 0, 4, 6, 0,
+        2, 5, 0, 0, 0, 4, 6, 0, 2, 4, 0, 0, 0, 4, 7, 0,
+        6, 6, 0, 0, 3, 3, 5, 0, 4, 2, 2, 0, 4, 4, 6, 0,
+        2, 5, 0, 0, 0, 4, 6, 0, 2, 4, 0, 0, 0, 4, 7, 0,
+        6, 6, 0, 0, 0, 3, 5, 0, 3, 2, 2, 0, 3, 4, 6, 0,
+        2, 5, 0, 0, 0, 4, 6, 0, 2, 4, 0, 0, 0, 4, 7, 0,
+        6, 6, 0, 0, 0, 3, 5, 0, 4, 2, 2, 0, 5, 4, 6, 0,
+        2, 5, 0, 0, 0, 4, 6, 0, 2, 4, 0, 0, 0, 4, 7, 0,
+        0, 6, 0, 0, 3, 3, 3, 0, 2, 0, 2, 0, 4, 4, 4, 0,
+        2, 6, 0, 0, 4, 4, 4, 0, 2, 5, 2, 0, 0, 5, 0, 0,
+        2, 6, 2, 0, 3, 3, 3, 0, 2, 2, 2, 0, 4, 4, 4, 0,
+        2, 5, 0, 0, 4, 4, 4, 0, 2, 4, 2, 0, 4, 4, 4, 0,
+        2, 6, 0, 0, 3, 3, 5, 0, 2, 2, 2, 0, 4, 4, 6, 0,
+        2, 5, 0, 0, 0, 4, 6, 0, 2, 4, 0, 0, 0, 4, 7, 0,
+        2, 6, 0, 0, 3, 3, 5, 0, 2, 2, 2, 0, 4, 4, 6, 0,
+        2, 5, 0, 0, 0, 4, 6, 0, 2, 4, 0, 0, 0, 4, 7, 0
+    ), mutable(false), visibility(private));
+
+    declare(integer, "PC", value(integer, 1536), mutable(true));
+    declare(integer, "A", value(integer, 0), mutable(true));
+    declare(integer, "X", value(integer, 0), mutable(true));
+    declare(integer, "Y", value(integer, 0), mutable(true));
+    declare(integer, "SP", value(integer, 253), mutable(true));
+    declare(integer, "P", value(integer, 36), mutable(true)); // U set, I set
+    declare(boolean, "running", value(boolean, true), mutable(true));
+    declare(integer, "opcode", value(integer, 0), mutable(true));
+    declare(text, "operation", value(text, ""), mutable(true));
+    declare(integer, "mode", value(integer, 0), mutable(true));
+    declare(integer, "effective_address", value(integer, 0), mutable(true));
+    declare(integer, "operand", value(integer, 0), mutable(true));
+    declare(integer, "temp", value(integer, 0), mutable(true));
+    declare(integer, "temp2", value(integer, 0), mutable(true));
+    declare(integer, "temp3", value(integer, 0), mutable(true));
+    declare(integer, "instructions", value(integer, 0), mutable(true));
+    declare(integer, "legal_opcode_count", value(integer, 0), mutable(true));
+    declare(integer, "cycles", value(integer, 0), mutable(true));
+    declare(integer, "branch_origin", value(integer, 0), mutable(true));
+    declare(integer, "base_address", value(integer, 0), mutable(true));
+    declare(boolean, "page_cross", value(boolean, false), mutable(true));
+    declare(boolean, "branch_taken", value(boolean, false), mutable(true));
+
+    define_function("get_flag", parameters("mask")) {
+        return_value((reference("P") & reference("mask")) != 0);
+    }
+    define_function("set_flag", parameters("mask", "enabled")) {
+        if_true(condition(reference("enabled"))) {
+            assign("P", (reference("P") | reference("mask")) & 255);
+        }
+        if_false(condition(reference("enabled"))) {
+            assign("P", reference("P") & (~reference("mask") & 255));
+        }
+        return_value(0);
+    }
+    define_function("set_nz", parameters("v")) {
+        set_flag(2, ((reference("v") & 255) == 0));
+        set_flag(128, ((reference("v") & 128) != 0));
+        return_value(reference("v") & 255);
+    }
+    define_function("fetch_byte", parameters()) {
+        declare(integer, "v", value(integer, array_get(reference("memory"), reference("PC"))), mutable(true));
+        assign("PC", (reference("PC") + 1) & 65535);
+        return_value(reference("v"));
+    }
+    define_function("fetch_word", parameters()) {
+        declare(integer, "lo", value(integer, fetch_byte()), mutable(true));
+        declare(integer, "hi", value(integer, fetch_byte()), mutable(true));
+        return_value(reference("lo") + (reference("hi") * 256));
+    }
+    define_function("read16_zp", parameters("zp")) {
+        declare(integer, "lo", value(integer, array_get(reference("memory"), reference("zp") & 255)), mutable(true));
+        declare(integer, "hi", value(integer, array_get(reference("memory"), (reference("zp") + 1) & 255)), mutable(true));
+        return_value(reference("lo") + (reference("hi") * 256));
+    }
+    define_function("read16", parameters("addr")) {
+        declare(integer, "lo", value(integer, array_get(reference("memory"), reference("addr") & 65535)), mutable(true));
+        declare(integer, "hi", value(integer, array_get(reference("memory"), (reference("addr") + 1) & 65535)), mutable(true));
+        return_value(reference("lo") + (reference("hi") * 256));
+    }
+    define_function("push", parameters("v")) {
+        array_set(reference("memory"), 256 + reference("SP"), reference("v") & 255);
+        assign("SP", (reference("SP") - 1) & 255);
+        return_value(0);
+    }
+    define_function("pop", parameters()) {
+        assign("SP", (reference("SP") + 1) & 255);
+        return_value(array_get(reference("memory"), 256 + reference("SP")));
+    }
+    define_function("resolve_address", parameters("am")) {
+        declare(integer, "addr", value(integer, 0), mutable(true));
+        declare(integer, "zp", value(integer, 0), mutable(true));
+        declare(integer, "ptr", value(integer, 0), mutable(true));
+        if_true(condition(reference("am") == 2)) { // immediate
+            assign("addr", reference("PC"));
+            assign("PC", (reference("PC") + 1) & 65535);
+            return_value(reference("addr"));
+        }
+        if_true(condition(reference("am") == 3)) { return_value(fetch_byte() & 255); } // zero page
+        if_true(condition(reference("am") == 4)) { return_value((fetch_byte() + reference("X")) & 255); }
+        if_true(condition(reference("am") == 5)) { return_value((fetch_byte() + reference("Y")) & 255); }
+        if_true(condition(reference("am") == 6)) { return_value(fetch_word()); }
+        if_true(condition(reference("am") == 7)) { // absolute,X
+            assign("addr", fetch_word());
+            assign("base_address", reference("addr"));
+            return_value((reference("addr") + reference("X")) & 65535);
+        }
+        if_true(condition(reference("am") == 8)) { // absolute,Y
+            assign("addr", fetch_word());
+            assign("base_address", reference("addr"));
+            return_value((reference("addr") + reference("Y")) & 65535);
+        }
+        if_true(condition(reference("am") == 9)) { // JMP indirect; NMOS page-wrap bug
+            assign("ptr", fetch_word());
+            assign("zp", array_get(reference("memory"), reference("ptr")));
+            assign("addr", array_get(reference("memory"), (reference("ptr") & 65280) | ((reference("ptr") + 1) & 255)));
+            return_value(reference("zp") + (reference("addr") * 256));
+        }
+        if_true(condition(reference("am") == 10)) { // (zero page,X)
+            assign("zp", (fetch_byte() + reference("X")) & 255);
+            return_value(read16_zp(reference("zp")));
+        }
+        if_true(condition(reference("am") == 11)) { // (zero page),Y
+            assign("zp", fetch_byte() & 255);
+            assign("addr", read16_zp(reference("zp")));
+            assign("base_address", reference("addr"));
+            return_value((reference("addr") + reference("Y")) & 65535);
+        }
+        if_true(condition(reference("am") == 12)) { // relative branch target
+            assign("addr", fetch_byte());
+            if_true(condition(reference("addr") >= 128)) { assign("addr", reference("addr") - 256); }
+            return_value((reference("PC") + reference("addr")) & 65535);
+        }
+        return_value(0);
+    }
+    define_function("compare", parameters("left", "right")) {
+        declare(integer, "d", value(integer, reference("left") - reference("right")), mutable(true));
+        set_flag(1, reference("left") >= reference("right"));
+        set_nz(reference("d") & 255);
+        return_value(reference("d") & 255);
+    }
+    define_function("adc", parameters("v")) {
+        declare(integer, "ci", value(integer, to_integer(get_flag(1))), mutable(true));
+        declare(integer, "sum", value(integer, reference("A") + reference("v") + reference("ci")), mutable(true));
+        set_flag(64, (((~(reference("A") ^ reference("v"))) & (reference("A") ^ reference("sum")) & 128) != 0));
+        if_true(condition(get_flag(8))) {
+            declare(integer, "lo", value(integer, (reference("A") & 15) + (reference("v") & 15) + reference("ci")), mutable(true));
+            declare(integer, "hi", value(integer, (reference("A") >> 4) + (reference("v") >> 4)), mutable(true));
+            if_true(condition(reference("lo") > 9)) { assign("lo", reference("lo") + 6); }
+            if_true(condition(reference("lo") > 15)) { assign("hi", reference("hi") + 1); }
+            if_true(condition(reference("hi") > 9)) { assign("hi", reference("hi") + 6); }
+            set_flag(1, reference("hi") > 15);
+            assign("A", ((reference("hi") << 4) | (reference("lo") & 15)) & 255);
+            set_nz(reference("sum") & 255); // NMOS 6502 decimal-mode N/Z from binary sum
+        }
+        if_false(condition(get_flag(8))) {
+            set_flag(1, reference("sum") > 255);
+            assign("A", reference("sum") & 255);
+            set_nz(reference("A"));
+        }
+        return_value(reference("A"));
+    }
+    define_function("sbc", parameters("v")) {
+        declare(integer, "ci", value(integer, to_integer(get_flag(1))), mutable(true));
+        declare(integer, "diff", value(integer, reference("A") - reference("v") - (1 - reference("ci"))), mutable(true));
+        set_flag(64, (((reference("A") ^ reference("v")) & (reference("A") ^ reference("diff")) & 128) != 0));
+        set_flag(1, reference("diff") >= 0);
+        if_true(condition(get_flag(8))) {
+            declare(integer, "lo", value(integer, (reference("A") & 15) - (reference("v") & 15) - (1 - reference("ci"))), mutable(true));
+            declare(integer, "hi", value(integer, (reference("A") >> 4) - (reference("v") >> 4)), mutable(true));
+            if_true(condition(reference("lo") < 0)) { assign("lo", reference("lo") - 6); assign("hi", reference("hi") - 1); }
+            if_true(condition(reference("hi") < 0)) { assign("hi", reference("hi") - 6); }
+            assign("A", ((reference("hi") << 4) | (reference("lo") & 15)) & 255);
+            set_nz(reference("diff") & 255); // NMOS decimal-mode N/Z from binary result
+        }
+        if_false(condition(get_flag(8))) {
+            assign("A", reference("diff") & 255);
+            set_nz(reference("A"));
+        }
+        return_value(reference("A"));
+    }
+
+    // Validate that the opcode metadata contains all 151 documented NMOS opcodes.
+    for_range("opcode_index", 0, 256, 1) {
+        if_true(condition(array_get(reference("opcode_names"), reference("opcode_index")) != "ILL")) {
+            assign("legal_opcode_count", reference("legal_opcode_count") + 1);
+        }
+    }
+    assert_equal(reference("legal_opcode_count"), 151);
+    println("Validated documented opcode entries:", reference("legal_opcode_count"));
+
+    // Load the built-in machine-code test at $0600.
+    for_range("i", 0, length(reference("program")), 1) {
+        array_set(reference("memory"), 1536 + reference("i"), array_get(reference("program"), reference("i")));
+    }
+    println("Loaded test program at $0600; executing...");
+
+    while_loop(condition(reference("running"))) {
+        assign("opcode", fetch_byte());
+        assign("operation", array_get(reference("opcode_names"), reference("opcode")));
+        assign("mode", array_get(reference("address_modes"), reference("opcode")));
+        assign("instructions", reference("instructions") + 1);
+        assign("cycles", reference("cycles") + array_get(reference("base_cycles"), reference("opcode")));
+
+        // $02 is an emulator-host halt sentinel for the sample program.
+        if_true(condition(reference("opcode") == 2)) {
+            println("HOST HALT sentinel encountered.");
+            assign("running", false);
+        }
+        if_true(condition((reference("operation") == "ILL") && (reference("opcode") != 2))) {
+            println("FAULT: unsupported undocumented opcode", hex(reference("opcode")), "at", hex((reference("PC") - 1) & 65535));
+            assign("running", false);
+        }
+        if_true(condition((reference("operation") != "ILL") && (reference("opcode") != 2))) {
+            assign("effective_address", 0);
+            assign("page_cross", false);
+            if_true(condition((reference("mode") != 0) && (reference("mode") != 1))) {
+                assign("effective_address", resolve_address(reference("mode")));
+            }
+            assign("branch_origin", reference("PC"));
+            if_true(condition((reference("mode") == 7) || (reference("mode") == 8) || (reference("mode") == 11))) {
+                assign("page_cross", ((reference("base_address") & 65280) != (reference("effective_address") & 65280)));
+            }
+            assign("operand", 0);
+            if_true(condition((reference("mode") != 0) && (reference("mode") != 1))) {
+                assign("operand", array_get(reference("memory"), reference("effective_address")));
+            }
+            if_true(condition(reference("page_cross") && (reference("mode") != 0) && (reference("operation") != "STA") && (reference("operation") != "STX") && (reference("operation") != "STY") && (reference("operation") != "ASL") && (reference("operation") != "LSR") && (reference("operation") != "ROL") && (reference("operation") != "ROR") && (reference("operation") != "INC") && (reference("operation") != "DEC"))) {
+                assign("cycles", reference("cycles") + 1);
+            }
+
+            // Logical and load instructions.
+            if_true(condition(reference("operation") == "ORA")) { assign("A", (reference("A") | reference("operand")) & 255); set_nz(reference("A")); }
+            if_true(condition(reference("operation") == "AND")) { assign("A", (reference("A") & reference("operand")) & 255); set_nz(reference("A")); }
+            if_true(condition(reference("operation") == "EOR")) { assign("A", (reference("A") ^ reference("operand")) & 255); set_nz(reference("A")); }
+            if_true(condition(reference("operation") == "ADC")) { adc(reference("operand")); }
+            if_true(condition(reference("operation") == "SBC")) { sbc(reference("operand")); }
+            if_true(condition(reference("operation") == "LDA")) { assign("A", reference("operand") & 255); set_nz(reference("A")); }
+            if_true(condition(reference("operation") == "LDX")) { assign("X", reference("operand") & 255); set_nz(reference("X")); }
+            if_true(condition(reference("operation") == "LDY")) { assign("Y", reference("operand") & 255); set_nz(reference("Y")); }
+            if_true(condition(reference("operation") == "CMP")) { compare(reference("A"), reference("operand")); }
+            if_true(condition(reference("operation") == "CPX")) { compare(reference("X"), reference("operand")); }
+            if_true(condition(reference("operation") == "CPY")) { compare(reference("Y"), reference("operand")); }
+            if_true(condition(reference("operation") == "BIT")) {
+                set_flag(2, ((reference("A") & reference("operand")) == 0));
+                set_flag(128, (reference("operand") & 128) != 0);
+                set_flag(64, (reference("operand") & 64) != 0);
+            }
+
+            // Stores.
+            if_true(condition(reference("operation") == "STA")) { array_set(reference("memory"), reference("effective_address"), reference("A")); }
+            if_true(condition(reference("operation") == "STX")) { array_set(reference("memory"), reference("effective_address"), reference("X")); }
+            if_true(condition(reference("operation") == "STY")) { array_set(reference("memory"), reference("effective_address"), reference("Y")); }
+
+            // Read-modify-write instructions, including accumulator forms.
+            if_true(condition((reference("operation") == "ASL") || (reference("operation") == "LSR") || (reference("operation") == "ROL") || (reference("operation") == "ROR") || (reference("operation") == "INC") || (reference("operation") == "DEC"))) {
+                if_true(condition(reference("mode") == 1)) { assign("temp", reference("A")); }
+                if_false(condition(reference("mode") == 1)) { assign("temp", reference("operand")); }
+                if_true(condition(reference("operation") == "ASL")) {
+                    set_flag(1, (reference("temp") & 128) != 0);
+                    assign("temp", (reference("temp") << 1) & 255);
+                }
+                if_true(condition(reference("operation") == "LSR")) {
+                    set_flag(1, (reference("temp") & 1) != 0);
+                    assign("temp", reference("temp") >> 1);
+                }
+                if_true(condition(reference("operation") == "ROL")) {
+                    assign("temp2", to_integer(get_flag(1)));
+                    set_flag(1, (reference("temp") & 128) != 0);
+                    assign("temp", ((reference("temp") << 1) | reference("temp2")) & 255);
+                }
+                if_true(condition(reference("operation") == "ROR")) {
+                    assign("temp2", to_integer(get_flag(1)));
+                    set_flag(1, (reference("temp") & 1) != 0);
+                    assign("temp", (reference("temp") >> 1) | (reference("temp2") * 128));
+                }
+                if_true(condition(reference("operation") == "INC")) { assign("temp", (reference("temp") + 1) & 255); }
+                if_true(condition(reference("operation") == "DEC")) { assign("temp", (reference("temp") - 1) & 255); }
+                set_nz(reference("temp"));
+                if_true(condition(reference("mode") == 1)) { assign("A", reference("temp")); }
+                if_false(condition(reference("mode") == 1)) { array_set(reference("memory"), reference("effective_address"), reference("temp")); }
+            }
+
+            // Branches. Branch target was resolved from a signed relative offset.
+            assign("branch_taken", false);
+            if_true(condition(reference("operation") == "BPL")) { assign("branch_taken", !get_flag(128)); }
+            if_true(condition(reference("operation") == "BMI")) { assign("branch_taken", get_flag(128)); }
+            if_true(condition(reference("operation") == "BVC")) { assign("branch_taken", !get_flag(64)); }
+            if_true(condition(reference("operation") == "BVS")) { assign("branch_taken", get_flag(64)); }
+            if_true(condition(reference("operation") == "BCC")) { assign("branch_taken", !get_flag(1)); }
+            if_true(condition(reference("operation") == "BCS")) { assign("branch_taken", get_flag(1)); }
+            if_true(condition(reference("operation") == "BNE")) { assign("branch_taken", !get_flag(2)); }
+            if_true(condition(reference("operation") == "BEQ")) { assign("branch_taken", get_flag(2)); }
+            if_true(condition(reference("branch_taken"))) {
+                assign("cycles", reference("cycles") + 1);
+                if_true(condition((reference("branch_origin") & 65280) != (reference("effective_address") & 65280))) { assign("cycles", reference("cycles") + 1); }
+                assign("PC", reference("effective_address"));
+            }
+
+            // Jumps, calls and returns.
+            if_true(condition(reference("operation") == "JMP")) { assign("PC", reference("effective_address")); }
+            if_true(condition(reference("operation") == "JSR")) {
+                assign("temp", (reference("PC") - 1) & 65535);
+                push(reference("temp") >> 8); push(reference("temp") & 255);
+                assign("PC", reference("effective_address"));
+            }
+            if_true(condition(reference("operation") == "RTS")) {
+                assign("temp", pop()); assign("temp2", pop());
+                assign("PC", ((reference("temp") + (reference("temp2") * 256)) + 1) & 65535);
+            }
+            if_true(condition(reference("operation") == "BRK")) {
+                assign("PC", (reference("PC") + 1) & 65535);
+                push(reference("PC") >> 8); push(reference("PC") & 255); push(reference("P") | 48);
+                set_flag(4, true); assign("PC", read16(65534));
+            }
+            if_true(condition(reference("operation") == "RTI")) {
+                assign("P", (pop() & 207) | 32);
+                assign("temp", pop()); assign("temp2", pop());
+                assign("PC", reference("temp") + (reference("temp2") * 256));
+            }
+
+            // Stack instructions.
+            if_true(condition(reference("operation") == "PHA")) { push(reference("A")); }
+            if_true(condition(reference("operation") == "PHP")) { push(reference("P") | 48); }
+            if_true(condition(reference("operation") == "PLA")) { assign("A", pop()); set_nz(reference("A")); }
+            if_true(condition(reference("operation") == "PLP")) { assign("P", (pop() & 207) | 32); }
+
+            // Register transfers and increments/decrements.
+            if_true(condition(reference("operation") == "TAX")) { assign("X", reference("A")); set_nz(reference("X")); }
+            if_true(condition(reference("operation") == "TAY")) { assign("Y", reference("A")); set_nz(reference("Y")); }
+            if_true(condition(reference("operation") == "TXA")) { assign("A", reference("X")); set_nz(reference("A")); }
+            if_true(condition(reference("operation") == "TYA")) { assign("A", reference("Y")); set_nz(reference("A")); }
+            if_true(condition(reference("operation") == "TSX")) { assign("X", reference("SP")); set_nz(reference("X")); }
+            if_true(condition(reference("operation") == "TXS")) { assign("SP", reference("X") & 255); }
+            if_true(condition(reference("operation") == "INX")) { assign("X", (reference("X") + 1) & 255); set_nz(reference("X")); }
+            if_true(condition(reference("operation") == "INY")) { assign("Y", (reference("Y") + 1) & 255); set_nz(reference("Y")); }
+            if_true(condition(reference("operation") == "DEX")) { assign("X", (reference("X") - 1) & 255); set_nz(reference("X")); }
+            if_true(condition(reference("operation") == "DEY")) { assign("Y", (reference("Y") - 1) & 255); set_nz(reference("Y")); }
+
+            // Processor status flags.
+            if_true(condition(reference("operation") == "CLC")) { set_flag(1, false); }
+            if_true(condition(reference("operation") == "SEC")) { set_flag(1, true); }
+            if_true(condition(reference("operation") == "CLI")) { set_flag(4, false); }
+            if_true(condition(reference("operation") == "SEI")) { set_flag(4, true); }
+            if_true(condition(reference("operation") == "CLV")) { set_flag(64, false); }
+            if_true(condition(reference("operation") == "CLD")) { set_flag(8, false); }
+            if_true(condition(reference("operation") == "SED")) { set_flag(8, true); }
+            // NOP intentionally has no state effect.
+        }
+    }
+
+    println(""); println("FINAL CPU STATE");
+    println("A  =", reference("A"), " X =", reference("X"), " Y =", reference("Y"));
+    println("SP =", hex(reference("SP")), " PC =", hex(reference("PC")), " P =", hex(reference("P")));
+    println("Instructions executed =", reference("instructions"));
+    println("Base cycles plus branch/page penalties =", reference("cycles"));
+    println("Memory[$0200] =", array_get(reference("memory"), 512));
+    println("Memory[$0201] =", array_get(reference("memory"), 513));
+    println("Memory[$0202] =", array_get(reference("memory"), 514));
+    assert_equal(array_get(reference("memory"), 512), 8);
+    assert_equal(array_get(reference("memory"), 513), 3);
+    assert_equal(array_get(reference("memory"), 514), 42);
+    println("SELF-TEST PASSED.");
+}

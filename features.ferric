@@ -1,0 +1,31 @@
+// Demonstrates user-defined functions, mutable bindings, arrays and control flow.
+module("feature_demo", version(1, 0, 0)) {
+    define_function("factorial", parameters("n")) {
+        declare(integer, "result", value(integer, 1), mutable(true));
+        for_range("i", 2, reference("n") + 1, 1) {
+            assign("result", reference("result") * reference("i"));
+        }
+        return_value(reference("result"));
+    }
+
+    declare(integer, "fact", value(integer, factorial(10)), mutable(false));
+    println("10! =", reference("fact"));
+    assert_equal(reference("fact"), 3628800);
+
+    declare(array, "values", array(4, 0), mutable(false));
+    array_set(reference("values"), 0, 13);
+    array_set(reference("values"), 1, 21);
+    array_set(reference("values"), 2, 34);
+    array_set(reference("values"), 3, 55);
+    println("Array length =", length(reference("values")));
+    println("values[2] =", array_get(reference("values"), 2));
+
+    declare(integer, "counter", value(integer, 0), mutable(true));
+    while_loop(condition(reference("counter") < 3)) {
+        println("Loop iteration", reference("counter"));
+        assign("counter", reference("counter") + 1);
+    }
+    if_true(condition(reference("counter") == 3)) {
+        println("Control-flow test passed.");
+    }
+}
